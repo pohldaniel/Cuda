@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <iostream>
 
-#include "cuda_runtime.h"
+
 #include "cuda_gl_interop.h"
 
 #include "stb\stb_image.h"
@@ -13,12 +13,17 @@
 
 unsigned int window_width = 512;
 unsigned int window_height = 512;
-unsigned int image_width = 512;
-unsigned int image_height = 512;
+int thread_x = 8;
+int thread_y = 8;
 
 Quad *quad;
 GLuint m_texture;
-unsigned int *cuda_dest_resource;
+float *fb;
+
+
+
+
+
 struct cudaGraphicsResource *cuda_tex_result_resource;
 
 POINT g_OldCursorPos;
@@ -29,7 +34,7 @@ void initApp(HWND hWnd);
 void enableVerticalSync(bool enableVerticalSync);
 void generateCUDAImage();
 ////////////////////////////////////////////////////////////////////////////////
-extern "C" void launch_cudaProcess(dim3 grid, dim3 block, int sbytes, unsigned int *g_odata, int imgw);
+extern "C" void launch_cudaProcess(dim3 blocks, dim3 threads, float *fb, int max_x, int max_y);
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd) {
 
@@ -97,8 +102,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 			TranslateMessage(&msg);
 			DispatchMessage(&msg);
 		}else {
-			generateCUDAImage();
-
+	
 			glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 			
@@ -238,41 +242,26 @@ void initApp(HWND hWnd) {
 
 	quad = new Quad(1.0f, 1.0f);
 
-	/*stbi_set_flip_vertically_on_load(true);
-	int width, height, numCompontents;
-	unsigned char* imageData = stbi_load("test.png", &width, &height, &numCompontents, 4);
-
 	// create a texture
 	glGenTextures(1, &m_texture);
 	glBindTexture(GL_TEXTURE_2D, m_texture);
-
-	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, imageData);
-	glGenerateMipmap(GL_TEXTURE_2D);
-	stbi_image_free(imageData);*/
-
-
-	// create a texture
-	glGenTextures(1, &m_texture);
-	glBindTexture(GL_TEXTURE_2D, m_texture);
-
-	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image_width, image_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, window_width, window_height, 0, GL_RGB, GL_FLOAT, NULL);
+	glBindTexture(GL_TEXTURE_2D, 0);
 
 	// register this texture with CUDA
 	cudaGraphicsGLRegisterImage(&cuda_tex_result_resource, m_texture, GL_TEXTURE_2D, cudaGraphicsMapFlagsWriteDiscard);
 
 	//Init CUDABuffer
-	unsigned int num_texels = image_width * image_height;
-	unsigned int num_values = num_texels * 4;
-	unsigned int size_tex_data = sizeof(GLubyte) * num_values;
-	cudaMalloc((void **)&cuda_dest_resource, size_tex_data);
+	int num_pixels = window_width * window_height;
+	size_t fb_size = 4 * num_pixels * sizeof(float);
+	cudaMallocManaged((void **)&fb, fb_size);
+
+	//fill up the framebuffer
+	generateCUDAImage();
 }
 
 void enableVerticalSync(bool enableVerticalSync) {
@@ -291,18 +280,19 @@ void enableVerticalSync(bool enableVerticalSync) {
 
 void generateCUDAImage() {
 
-	dim3 block(16, 16, 1);
-	dim3 grid(image_width / block.x, image_height / block.y, 1);
+	dim3 blocks(window_width / thread_x + 1, window_height / thread_y + 1);
+	dim3 threads(thread_x, thread_y);
 
-	launch_cudaProcess(grid, block, 0, cuda_dest_resource, image_width);
+	launch_cudaProcess(blocks, threads, fb, window_width, window_height);
 
 	cudaArray *texture_ptr;
 	cudaGraphicsMapResources(1, &cuda_tex_result_resource, 0);
 	cudaGraphicsSubResourceGetMappedArray(&texture_ptr, cuda_tex_result_resource, 0, 0);
 
-	int num_texels = image_width * image_height;
-	int num_values = num_texels * 4;
-	int size_tex_data = sizeof(GLubyte) * num_values;
-	cudaMemcpyToArray(texture_ptr, 0, 0, cuda_dest_resource, size_tex_data, cudaMemcpyDeviceToDevice);
+	
+	int num_pixels = window_width * window_height;
+	size_t fb_size = 4 * num_pixels * sizeof(float);
+
+	cudaMemcpyToArray(texture_ptr, 0, 0, fb, fb_size, cudaMemcpyDeviceToDevice);
 	cudaGraphicsUnmapResources(1, &cuda_tex_result_resource, 0);
 }
