@@ -5,3 +5,5 @@ I added some libararies and headers out of this Toolkit just to make the project
 content from the Toolkit.
 
 At the moment I following this tutorial https://developer.nvidia.com/blog/accelerated-ray-tracing-cuda
+
+The project 07PathTracer is from https://www.keithlantz.net/2013/03/path-tracer-with-triangle-primitives-and-binary-space-partitioning/
